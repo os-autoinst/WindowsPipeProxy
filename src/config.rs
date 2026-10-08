@@ -85,7 +85,7 @@ impl Args {
     // Create a new Args instance from the given program arguments
     pub fn create() -> Result<Args> {
         let mut args = Args {
-            config_file: "pipe-proxy.toml".to_string(),
+            config_file: "C:\\pipe-proxy\\config.toml".to_string(),
             args: collect_args(),
         };
         args.parse()?;
@@ -109,7 +109,7 @@ impl Args {
     pub fn parse(&mut self) -> Result<()> {
         for arg in self.args.iter() {
             if arg.starts_with("-") {
-                // flag
+                bail!("invalid argument: {}", arg)
             } else {
                 self.config_file = arg.clone();
             }
