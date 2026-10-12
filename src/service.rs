@@ -5,6 +5,7 @@ pub mod windows {
     use std::time::Duration;
 
     use anyhow::{Context, Result};
+    use log::{error, info};
     use windows_service::service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
         ServiceType,
@@ -14,19 +15,27 @@ pub mod windows {
     use windows_service::{define_windows_service, service_control_handler};
     use windows_service_detector::is_running_as_windows_service;
 
+    use crate::run_main;
+
     pub const SERVICE_NAME: &str = "PipeProxy";
 
     define_windows_service!(ffi_service_main, service_main);
 
     pub fn run_as_service() -> Result<()> {
         service_dispatcher::start(SERVICE_NAME, ffi_service_main)
-            .context("windows service dispatch failed")
+            .context("windows service dispatch failed")?;
+        Ok(())
     }
 
     // Entry point for the service. Execution will start on a background thread after service_dispatcher::start
     fn service_main(arguments: Vec<OsString>) {
+        // Attach logging to the Windows Event Log.
+        winlog::try_register(SERVICE_NAME).expect("Log event registration failed");
+        winlog::init(SERVICE_NAME).expect("Log event initialization failed");
+        log::set_max_level(log::LevelFilter::Debug);
+
         if let Err(e) = service_worker(arguments) {
-            eprintln!("service error: {e:?}");
+            error!("service error: {e:?}");
         }
     }
 
@@ -58,11 +67,14 @@ pub mod windows {
             })
             .context("service status error")?;
 
+        // Run main loop
+        run_main();
+
         Ok(())
     }
 
     fn service_shutdown() {
-        eprintln!("service shutdown requested");
+        info!("service shutdown requested");
         std::process::exit(1);
     }
 
@@ -70,7 +82,7 @@ pub mod windows {
         match is_running_as_windows_service() {
             Ok(ret) => ret,
             Err(err) => {
-                eprintln!("windows service detection error: {}", err);
+                error!("windows service detection error: {}", err);
                 false
             }
         }

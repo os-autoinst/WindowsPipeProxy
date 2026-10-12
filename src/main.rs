@@ -3,6 +3,7 @@ mod named_pipe;
 mod service;
 mod splice;
 
+use log::{error, info, warn};
 use std::time::Duration;
 use tokio::{
     fs::{OpenOptions, try_exists},
@@ -34,12 +35,35 @@ const ERR_CONFIG_INVAL: i32 = 102; // Configuration (file) is invalid
 const ERR_SOCKET_ERROR: i32 = 103; // Socket errot
 const ERR_SERVICE_ERROR: i32 = 104; // Service error
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    if is_service_run() {
+        if let Err(err) = run_as_service() {
+            error!("service error: {err}");
+            std::process::exit(ERR_SERVICE_ERROR);
+        }
+        // Note: The service function will call run_main() below. This is needed to guarantee that the logger is on the correct thread
+    } else {
+        stderrlog::new()
+            .module(module_path!())
+            .verbosity(stderrlog::LogLevelNum::Debug)
+            .init()
+            .expect("failed to setup the logger");
+        info!("wpp - standalone run");
+        run_main();
+    }
+}
+
+pub fn run_main() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime initialization failed");
+    rt.block_on(main_loop());
+}
+
+// Callable main loop
+async fn main_loop() {
     let args = match Args::create() {
         Ok(args) => args,
         Err(err) => {
-            eprintln!("argument error: {err}");
+            error!("argument error: {err}");
             std::process::exit(ERR_CONFIG_INVAL);
         }
     };
@@ -49,37 +73,29 @@ async fn main() {
         .expect("error checking configuration file")
         == false
     {
-        eprintln!("configuration file {cf_filename} doesn't exist. Cannot start");
+        error!("configuration file {cf_filename} doesn't exist. Cannot start");
         std::process::exit(ERR_NO_CONFIG);
     }
 
     let mut cf = match config::Config::parse_file(cf_filename) {
         Ok(config) => config,
         Err(err) => {
-            eprintln!("configuration error: {err}");
+            error!("configuration error: {err}");
             std::process::exit(ERR_CONFIG_INVAL);
         }
     };
     cf.apply_args(&args);
     if let Err(err) = cf.verify() {
-        eprintln!("invalid configuration: {err}");
+        error!("invalid configuration: {err}");
         std::process::exit(ERR_CONFIG_INVAL);
     }
 
-    eprintln!("Windows Pipe Proxy - version 0.4");
-
-    if is_service_run() {
-        eprintln!("running as windows service");
-        if let Err(err) = run_as_service() {
-            eprintln!("service error: {err}");
-            std::process::exit(ERR_SERVICE_ERROR);
-        }
-    }
+    info!("Windows Pipe Proxy - version {}", env!("CARGO_PKG_VERSION"));
     if cf.verbose {
-        eprintln!("verbose: on");
-        eprintln!("Pipe reconnect attempts: {}", cf.plumber.reconnect_attempts);
-        eprintln!("Pipe reconnect delay: {}s", cf.plumber.reconnect_delay);
-        eprintln!("Splice buffer size: {}", cf.plumber.splice_buffer_size);
+        info!("verbose: on");
+        info!("Pipe reconnect attempts: {}", cf.plumber.reconnect_attempts);
+        info!("Pipe reconnect delay: {}s", cf.plumber.reconnect_delay);
+        info!("Splice buffer size: {}", cf.plumber.splice_buffer_size);
     }
 
     let mut tasks = Vec::new();
@@ -87,7 +103,7 @@ async fn main() {
         let listener = match TcpListener::bind(pipe.addr.as_str()).await {
             Ok(listener) => listener,
             Err(err) => {
-                eprintln!("error binding tcp socket to {}: {err}", pipe.addr);
+                error!("error binding tcp socket to {}: {err}", pipe.addr);
                 std::process::exit(ERR_SOCKET_ERROR);
             }
         };
@@ -98,7 +114,7 @@ async fn main() {
     }
     for task in tasks {
         if let Err(err) = task.await {
-            eprintln!("task error: {err}");
+            error!("task error: {err}");
             std::process::exit(ERR_RUNTIME);
         }
     }
@@ -111,7 +127,7 @@ async fn worker_loop(named_pipe: Pipe, listener: TcpListener, cf: config::Config
     };
 
     if cf.verbose {
-        println!("{} => {address} is listening", named_pipe.src);
+        info!("{} => {address} is listening", named_pipe.src);
     }
 
     loop {
@@ -130,7 +146,7 @@ async fn worker_loop(named_pipe: Pipe, listener: TcpListener, cf: config::Config
                     print = !msg.contains("All pipe instances are busy");
                 }
                 if print {
-                    eprintln!("{}: pipe error: {err}", named_pipe.src);
+                    error!("{}: pipe error: {err}", named_pipe.src);
                 }
                 sleep(Duration::from_millis(500)).await;
                 continue;
@@ -139,11 +155,11 @@ async fn worker_loop(named_pipe: Pipe, listener: TcpListener, cf: config::Config
         let (mut socket, addr) = match listener.accept().await {
             Ok((sock, addr)) => (sock, addr),
             Err(err) => {
-                eprintln!("{}: error accepting client: {err}", named_pipe.src);
+                warn!("{}: error accepting client: {err}", named_pipe.src);
                 continue;
             }
         };
-        println!("connected: {} <==> {}", pipe.path(), addr.to_string());
+        info!("connected: {} <==> {}", pipe.path(), addr.to_string());
         loop {
             let ret;
             if named_pipe.file.is_empty() {
@@ -175,7 +191,7 @@ async fn worker_loop(named_pipe: Pipe, listener: TcpListener, cf: config::Config
                         .await
                     }
                     Err(err) => {
-                        eprintln!(
+                        warn!(
                             "{}: error to open pipe log file: {err} - will continue without log file",
                             named_pipe.src
                         );
@@ -187,7 +203,7 @@ async fn worker_loop(named_pipe: Pipe, listener: TcpListener, cf: config::Config
 
             match ret {
                 Ok(_) => {
-                    eprintln!("{}: enexpected EOF", named_pipe.src);
+                    error!("{}: enexpected EOF", named_pipe.src);
                     break;
                 }
                 Err(e) => {
@@ -195,7 +211,7 @@ async fn worker_loop(named_pipe: Pipe, listener: TcpListener, cf: config::Config
                     if e.kind() == std::io::ErrorKind::ConnectionAborted
                         || e.to_string() == "connection closed"
                     {
-                        eprintln!(
+                        warn!(
                             "{}: client disconnected ({})",
                             named_pipe.src,
                             e.to_string()
@@ -209,20 +225,20 @@ async fn worker_loop(named_pipe: Pipe, listener: TcpListener, cf: config::Config
                             cf.verbose,
                             named_pipe.src.as_str(),
                         ) {
-                            eprintln!("{}: pipe error: {err}", named_pipe.src);
+                            error!("{}: pipe error: {err}", named_pipe.src);
                         } else {
                             // Pipe is reconnected, let's continue
                             continue;
                         }
                     } else {
-                        eprintln!("{}: splice error: {e} ({})", named_pipe.src, e.kind());
+                        error!("{}: splice error: {e} ({})", named_pipe.src, e.kind());
                     }
                     break;
                 }
             };
         }
         if cf.verbose {
-            eprintln!("{} closed", pipe.path())
+            info!("{} closed", pipe.path())
         }
     }
 }
