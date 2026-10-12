@@ -22,6 +22,24 @@ Then run the program and pass the configuration file as argument:
 .\windows-pipe-proxy.exe pipe-proxy.toml
 ```
 
+### Register as a Windows service
+
+By default, the service expects the configuration file to be present in `C:\pipe-proxy\config.toml`.
+You can change this by adding a configuration file argument.
+
+To define a Service with the default parameters, use `sc.exe` (including the spaces after `binPath=` and `start=`)
+
+```
+sc.exe create "PipeProxy" binPath= "C:\pipe-proxy\windows-pipe-proxy.exe" start= auto
+sc.exe start "PipeProxy"
+```
+
+To delete the said service again:
+
+```
+sc.exe delete "PipeProxy"
+```
+
 ## Credits
 
 * Inspired by https://github.com/pratikpc/named-pipe-to-tcp-proxy

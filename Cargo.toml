@@ -8,3 +8,8 @@ anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 toml = "1.1.4"
+windows = { version = "0.58", features = ["Win32_System_Threading", ]}
+windows-service-detector = "0.1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"

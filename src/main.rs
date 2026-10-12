@@ -1,5 +1,6 @@
 mod config;
 mod named_pipe;
+mod service;
 mod splice;
 
 use std::time::Duration;
@@ -14,6 +15,7 @@ use tokio::{
 use crate::{
     config::{Args, Pipe},
     named_pipe::NamedPipe,
+    service::windows::{is_service_run, run_as_service},
 };
 
 impl splice::AsyncReadable for TcpStream {
@@ -30,6 +32,7 @@ const ERR_RUNTIME: i32 = 100; // General runtime error
 const ERR_NO_CONFIG: i32 = 101; // Configuration file doesn't exist
 const ERR_CONFIG_INVAL: i32 = 102; // Configuration (file) is invalid
 const ERR_SOCKET_ERROR: i32 = 103; // Socket errot
+const ERR_SERVICE_ERROR: i32 = 104; // Service error
 
 #[tokio::main]
 async fn main() {
@@ -64,6 +67,14 @@ async fn main() {
     }
 
     eprintln!("Windows Pipe Proxy - version 0.4");
+
+    if is_service_run() {
+        eprintln!("running as windows service");
+        if let Err(err) = run_as_service() {
+            eprintln!("service error: {err}");
+            std::process::exit(ERR_SERVICE_ERROR);
+        }
+    }
     if cf.verbose {
         eprintln!("verbose: on");
         eprintln!("Pipe reconnect attempts: {}", cf.plumber.reconnect_attempts);
